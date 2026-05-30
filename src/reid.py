@@ -39,16 +39,16 @@ class CustomReID:
         if frame is None or frame.size == 0 or len(box) != 4:
             return None
 
-        frame_height, frame_width = frame.shape[:2]
         x1, y1, x2, y2 = (int(round(value)) for value in box)
-        x1 = max(0, min(x1, frame_width))
-        x2 = max(0, min(x2, frame_width))
-        y1 = max(0, min(y1, frame_height))
-        y2 = max(0, min(y2, frame_height))
-        if x2 <= x1 or y2 <= y1:
+        height = y2 - y1
+        if x2 <= x1 or height <= 0:
             return None
 
-        crop = frame[y1:y2, x1:x2]
+        head_y2 = y1 + int(height * 0.25)
+        crop = frame[
+            max(0, y1) : min(frame.shape[0], head_y2),
+            max(0, x1) : min(frame.shape[1], x2),
+        ]
         if crop.size == 0:
             return None
 

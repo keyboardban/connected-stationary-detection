@@ -36,7 +36,7 @@ class StationaryTracker:
         fps: float,
         history_seconds: float,
         pixel_threshold: float,
-        similarity_threshold: float = 0.83,
+        similarity_threshold: float = 0.70,
     ) -> None:
         if fps <= 0:
             raise ValueError("fps must be positive.")
@@ -73,23 +73,8 @@ class StationaryTracker:
             self.tracks[track_id] = state
             return state
 
-        best_orphan_id: int | None = None
-        best_similarity = -1.0
-        if current_embedding is not None:
-            for orphan_id, orphan in self.orphaned_tracks.items():
-                if orphan.embedding is None:
-                    continue
-                similarity = float(
-                    F.cosine_similarity(
-                        current_embedding.unsqueeze(0),
-                        orphan.embedding.unsqueeze(0),
-                    ).item()
-                )
-                if similarity > best_similarity:
-                    best_orphan_id = orphan_id
-                    best_similarity = similarity
-
-        if best_similarity <= self.similarity_threshold:
+        best_orphan_id = self._attempt_reid_recovery(current_embedding, centroid)
+        if best_orphan_id is None:
             best_orphan_id = self._find_color_fallback(centroid, color)
 
         if best_orphan_id is None:
@@ -101,6 +86,45 @@ class StationaryTracker:
 
         self.tracks[track_id] = state
         return state
+
+    def _attempt_reid_recovery(
+        self,
+        current_embedding: torch.Tensor | None,
+        current_centroid: np.ndarray,
+    ) -> int | None:
+        """Recover the best nearby orphan using distance-penalized similarity."""
+        if current_embedding is None:
+            return None
+
+        best_orphan_id: int | None = None
+        highest_score = -1.0
+        for orphan_id, orphan in self.orphaned_tracks.items():
+            old_embedding = orphan.embedding
+            if old_embedding is None:
+                continue
+
+            similarity = float(
+                F.cosine_similarity(
+                    current_embedding.unsqueeze(0),
+                    old_embedding.unsqueeze(0),
+                ).item()
+            )
+            last_centroid = (
+                orphan.history[-1] if orphan.history else orphan.last_centroid
+            )
+            distance = float(np.linalg.norm(current_centroid - last_centroid))
+            if distance > 200.0:
+                continue
+
+            distance_penalty = distance / 1000.0
+            final_score = similarity - distance_penalty
+            if final_score > highest_score:
+                best_orphan_id = orphan_id
+                highest_score = final_score
+
+        if highest_score >= self.similarity_threshold:
+            return best_orphan_id
+        return None
 
     def _find_color_fallback(
         self, centroid: np.ndarray, color: str
