@@ -1,0 +1,1 @@
+"""Longest Stay Detection package."""

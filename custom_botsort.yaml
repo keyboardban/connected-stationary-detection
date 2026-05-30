@@ -1,0 +1,15 @@
+# Ultralytics BoT-SORT configuration tuned for entrance-camera occlusion.
+tracker_type: botsort
+track_high_thresh: 0.4
+track_low_thresh: 0.1
+new_track_thresh: 0.7
+track_buffer: 90
+match_thresh: 0.8
+fuse_score: true
+gmc_method: sparseOptFlow
+
+# Appearance recovery is handled by src/reid.py so BoT-SORT stays lightweight.
+proximity_thresh: 0.5
+appearance_thresh: 0.8
+with_reid: false
+model: auto

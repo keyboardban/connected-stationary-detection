@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local CCTV inputs and generated artifacts
+data/*
+!data/.gitkeep
+outputs/*
+!outputs/.gitkeep
+
+# Downloaded model weights
+*.pt
+*.pth
+*.onnx
+
+# Local tooling
+.idea/
+.vscode/

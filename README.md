@@ -1,0 +1,61 @@
+# Longest Stay Detection
+
+Computer-vision pipeline for detecting the person with the longest continuous
+stationary duration in CCTV footage. The project is designed for Apple Silicon
+and runs Ultralytics inference with `device="mps"`.
+
+## Features
+
+- YOLOv8 instance segmentation for overlapping people
+- Occlusion-tuned BoT-SORT tracking
+- Custom MobileNetV2 appearance embeddings for ID recovery
+- Torso-color fallback matching
+- Sliding-window stationary-duration analysis
+- Polygon exclusion zone for ignoring people inside a room
+- Annotated MP4 output with track IDs and stationary durations
+
+## Setup
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+## Input
+
+Place the CCTV video at:
+
+```text
+data/entrance.mov
+```
+
+The input video is intentionally excluded from Git because CCTV footage may
+contain personal data.
+
+## Run
+
+```bash
+python main.py
+```
+
+The annotated result is written to:
+
+```text
+outputs/result.mp4
+```
+
+## Benchmark
+
+```bash
+python experiments.py
+```
+
+Benchmark results are written to `outputs/experiments_result.csv`.
+
+## Notes
+
+- Run on Apple Silicon with an MPS-enabled PyTorch installation.
+- Model weights are downloaded automatically on first use.
+- Adjust `EXCLUSION_POLYGON` in `main.py` for the target camera view.
