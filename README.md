@@ -54,6 +54,10 @@ python experiments.py
 
 Benchmark results are written to `outputs/experiments_result.csv`.
 
+For the full implementation history, architecture, output interpretation, and
+measured pipeline comparison, read the
+[detailed implementation report](docs/IMPLEMENTATION_REPORT.md).
+
 ## Notes
 
 - Run on Apple Silicon with an MPS-enabled PyTorch installation.
