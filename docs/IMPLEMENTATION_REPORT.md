@@ -330,7 +330,7 @@ max_orphan_frames = fps * 3
 
 ```python
 EXCLUSION_POLYGON = np.array(
-    [[750, 1600], [1585, 1440], [1660, 220], [820, 70]],
+    [[421, 901], [890, 811], [932, 124], [461, 39]],
     dtype=np.int32,
 )
 ```
