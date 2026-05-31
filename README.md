@@ -11,7 +11,7 @@ and runs Ultralytics inference with `device="mps"`.
 - Custom MobileNetV2 appearance embeddings for ID recovery
 - Torso-color fallback matching
 - Sliding-window stationary-duration analysis
-- Polygon exclusion zone for ignoring people inside a room
+- Polygon exclusion zone for ignoring people inside a configured area
 - Annotated MP4 output with track IDs and stationary durations
 
 ## Setup
