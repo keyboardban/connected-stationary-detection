@@ -16,9 +16,10 @@ Track ID (`ID switching`) เสื้อยูนิฟอร์มที่ม
 4. ใช้ตำแหน่งบนภาพเป็นข้อจำกัดทางฟิสิกส์ ป้องกันการจับคู่คนที่ดูเหมือนกัน
    แต่เคลื่อนที่ไกลผิดธรรมชาติ
 5. ใช้สีเสื้อบริเวณลำตัวเป็น fallback feature
-6. ใช้ Polygon Exclusion Zone ตัดบุคคลภายในพื้นที่ที่กำหนดออกจากการคำนวณ
-7. ใช้ Sliding Window Distance Thresholding วัดเวลาที่บุคคลอยู่นิ่ง
-8. ใช้ `device="mps"` สำหรับเร่ง inference บน Apple Silicon
+6. ใช้ Shape-Aware Lanyard Color เป็น auxiliary tie-breaker
+7. ใช้ Polygon Exclusion Zone ตัดบุคคลภายในพื้นที่ที่กำหนดออกจากการคำนวณ
+8. ใช้ Sliding Window Distance Thresholding วัดเวลาที่บุคคลอยู่นิ่ง
+9. ใช้ `device="mps"` สำหรับเร่ง inference บน Apple Silicon
 
 โครงสร้างนี้เหมาะกับข้อจำกัดของ Hackathon 24 ชั่วโมง เพราะแต่ละส่วนแยกจากกัน
 และสามารถทดลองเปลี่ยน Detector, Tracker และ ReID ได้โดยไม่ต้องเขียน pipeline
@@ -68,6 +69,9 @@ flowchart TD
     F --> G["Batched MobileNetV2<br/>Multi-Region Embeddings<br/>device=mps"]
     D -- "No" --> H["HSV Regional Colors"]
     H --> I["Pants Color<br/>Torso Color"]
+    D -- "No" --> O["Central Chest ROI"]
+    O --> P["CLAHE + HSV Mask<br/>Morphology + Thin Contours<br/>15-Frame Voting"]
+    P --> J
     G --> J["Custom ReID Recovery"]
     I --> J
     J --> K["Spatial Constraint<br/>distance <= 200 px"]
@@ -83,7 +87,7 @@ flowchart TD
 | `src/detector.py` | โหลด YOLO และรัน tracking เฉพาะ class `person` |
 | `custom_botsort.yaml` | ปรับ BoT-SORT สำหรับ occlusion |
 | `src/reid.py` | สกัด normalized Head, Pants และ Torso Embeddings ด้วย MobileNetV2 แบบ batched |
-| `src/features.py` | สกัดสีเสื้อบริเวณลำตัวด้วย HSV |
+| `src/features.py` | สกัด Pants/Torso Color และ Shape-Aware Lanyard Color |
 | `src/logic.py` | จัดการ Stationary State, orphan tracks, Custom ReID และ fallback matching |
 | `src/utils.py` | คำนวณ centroid, feet point, polygon test และวาดข้อมูลลงเฟรม |
 | `main.py` | เชื่อมทุกโมดูลเข้าด้วยกันและ render วิดีโอ |
@@ -326,7 +330,51 @@ final_score = multi_region_similarity - distance_penalty - pants_color_penalty
 - embedding ที่คล้ายกันแต่ตำแหน่งห่างควรมีความน่าเชื่อถือลดลง
 - ช่วยลด false merge เมื่อหลายคนใส่ชุดคล้ายกัน
 
-### 4.10 เพิ่ม EMA สำหรับ Embedding แต่ละ Region
+### 4.10 เพิ่ม Shape-Aware Lanyard Color Extractor
+
+แม้ Pants-First ReID จะเหมาะกับวิดีโอนี้มากกว่า แต่สายคล้องคอยังมีประโยชน์เป็น
+auxiliary cue ในบางเฟรม ปัญหาคือเสื้อของผู้เข้าร่วมเป็นโทนฟ้าและน้ำเงิน หากนับ
+จำนวน pixel สีแบบตรงไปตรงมา ระบบอาจเข้าใจผิดว่าสีเสื้อคือสีสายคล้องคอ
+
+จึงเพิ่ม `LanyardExtractor` แยกจาก `AppearanceExtractor` โดยไม่ใช้ dominant
+color ของ ROI กว้าง แต่ใช้ image processing pipeline ดังนี้:
+
+1. Crop เฉพาะกลางอกด้านบน:
+   - แกน X: `30%-70%` ของความกว้าง Bounding Box
+   - แกน Y: `18%-52%` ของความสูง Bounding Box
+2. แปลง ROI จาก BGR เป็น HSV
+3. ใช้ CLAHE กับ channel `V` เพื่อลดผลกระทบจากเงา
+4. สร้าง mask สำหรับ Red, Blue, Green, Yellow, Orange และ Purple
+5. ใช้ Morphological Opening ลบ noise ขนาดเล็ก
+6. ใช้ Morphological Closing เชื่อมส่วนของสายที่ขาดจากเงาหรือ motion blur
+7. หา contours และเก็บเฉพาะ component ที่มีลักษณะคล้ายสาย:
+   - `0.002 <= area_ratio <= 0.18`
+   - `aspect_ratio >= 1.8`
+   - อยู่ไม่ไกลจากแกนกลางของอก
+8. Reject mask ขนาดใหญ่ที่น่าจะเป็นเสื้อ:
+   - Blue coverage ต้องไม่เกิน `25%` ของ ROI
+   - สีอื่นต้องไม่เกิน `35%` ของ ROI
+9. เก็บผลย้อนหลัง `15` เฟรมต่อ Track ID และเลือกสีด้วย majority vote
+
+Lanyard Color ถูกใช้แบบอนุรักษ์นิยม:
+
+```text
+หาก pants color ต่างกัน:
+    color_penalty += 0.15
+
+หาก lanyard color ที่ทราบแน่นอนต่างกัน:
+    color_penalty += 0.05
+```
+
+น้ำหนักของ lanyard ต่ำกว่า pants อย่างตั้งใจ เพราะสายคล้องคอมีขนาดเล็ก
+ถูกบังง่าย และอาจมองไม่เห็นเมื่อคนหันหลัง หาก ReID embedding match ไม่สำเร็จ
+ระบบ fallback ตามลำดับ:
+
+```text
+Pants Color -> Lanyard Color -> Torso Color
+```
+
+### 4.11 เพิ่ม EMA สำหรับ Embedding แต่ละ Region
 
 ระบบไม่แทนที่ embedding เดิมด้วยภาพล่าสุดทันที แต่ใช้ Exponential Moving
 Average:
@@ -342,7 +390,7 @@ new_region_embedding =
 - ลดผลกระทบจากเฟรมที่ใบหน้าถูกบังบางส่วน
 - ทำให้ identity representation เสถียรกว่าการใช้ภาพล่าสุดเพียงเฟรมเดียว
 
-### 4.11 จำกัดอายุ Orphan Track
+### 4.12 จำกัดอายุ Orphan Track
 
 Orphan track จะใช้สำหรับ recovery ได้ไม่เกินประมาณ 3 วินาที:
 
@@ -358,7 +406,7 @@ max_orphan_frames = fps * 3
 เหตุผลคือ หากเก็บ orphan embedding ไว้ตลอดวิดีโอ คนใหม่ที่เข้ามาภายหลังและ
 มีลักษณะคล้ายกันอาจถูก merge เข้ากับคนเก่าอย่างผิดพลาด
 
-### 4.12 เพิ่ม ROI Exclusion Zone
+### 4.13 เพิ่ม ROI Exclusion Zone
 
 บางพื้นที่ในภาพไม่ควรนำมาคำนวณเวลานิ่ง จึงเพิ่ม polygon ที่ปรับตามมุมกล้อง:
 
@@ -407,10 +455,10 @@ cv2.pointPolygonTest(polygon, feet_point, False) > 0
    - ไม่อัปเดต stationary timer
 8. หากอยู่นอก polygon:
    - คำนวณ centroid
-   - สกัด Torso Color และ Pants Color
+   - สกัด Torso Color, Pants Color และ Shape-Aware Lanyard Color
    - สกัด Head, Pants และ Torso Embeddings ด้วย batched MPS inference
    - พยายาม recover ID ด้วย distance-penalized cosine similarity
-   - fallback ไป Pants Color ก่อน Torso Color หาก embedding match ไม่สำเร็จ
+   - fallback ตามลำดับ Pants Color, Lanyard Color และ Torso Color
    - อัปเดต embedding ของแต่ละ region ด้วย EMA
    - อัปเดต sliding-window stationary state
 9. วาด Bounding Box และข้อมูลลงบนเฟรม
@@ -429,13 +477,14 @@ cv2.pointPolygonTest(polygon, feet_point, False) > 0
 | Bounding Box สีแดง | บุคคลอยู่ในสถานะ stationary |
 | `ID: ...` | Track ID ปัจจุบันจาก tracker |
 | `Pants: ...` | สีกางเกงเด่นที่สกัดจาก HSV |
+| `Lanyard: ...` | สีสายคล้องคอจาก thin-component detection และ temporal voting |
 | `Torso: ...` | สีเสื้อเด่นที่สกัดจาก HSV |
 | `Max Stay: ...s` | เวลานิ่งต่อเนื่องสูงสุดของ identity นั้น |
 
 ตัวอย่าง label:
 
 ```text
-ID: 12 | Pants: Purple | Torso: Blue | Max Stay: 8.47s
+ID: 12 | Pants: Purple | Lanyard: Red | Torso: Blue | Max Stay: 8.47s
 ```
 
 ข้อสำคัญ: Track ID ที่แสดงบนวิดีโออาจเปลี่ยนหลัง tracker สร้าง ID ใหม่ แต่
@@ -539,7 +588,7 @@ Custom ReID จะพยายามย้าย stationary history จาก ID
 - Lost-track buffer `90` เฟรม
 - Custom MobileNetV2 Pants-First Multi-Region ReID
 - Spatial constraint และ distance penalty
-- Pants Color fallback พร้อม Torso Color fallback ลำดับรอง
+- Pants Color fallback, Shape-Aware Lanyard tie-breaker และ Torso Color fallback
 
 ผล:
 
@@ -752,7 +801,20 @@ MobileNetV2 weights ปัจจุบันมาจาก ImageNet เหม�
 ที่เร็ว แต่ยังไม่ใช่โมเดลที่ train มาเพื่อแยกบุคคลโดยตรง หากมีเวลาเพิ่มควร
 ทดลอง OSNet หรือโมเดลที่ fine-tune บน Market-1501 หรือ MSMT17
 
-### 12.3 ควรทำ Ground Truth Annotation
+### 12.3 Lanyard Color ยังเป็น Auxiliary Feature
+
+Shape-aware filtering ลดการสับสนระหว่างเสื้อสีน้ำเงินและสายคล้องคอ แต่ไม่
+สามารถรับประกันผลในทุกเฟรม เพราะสายมีขนาดเล็ก อาจถูกบัง หรืออาจไม่อยู่ใน
+central chest ROI เมื่อคนเอียงตัว จึงไม่ควรใช้เป็น identity key เพียงอย่างเดียว
+
+หากมีเวลาเพิ่มควร:
+
+- วัด precision และ recall ของ Lanyard Color แยกตามสี
+- สร้าง debug output ของ mask และ contours
+- calibrate HSV thresholds จากตัวอย่างจริงในวิดีโอ
+- ใช้ segmentation หรือ line detection เพิ่ม หากรูปแบบสายมีความสม่ำเสมอ
+
+### 12.4 ควรทำ Ground Truth Annotation
 
 `Total Unique IDs` เป็น proxy metric เท่านั้น การประเมินที่น่าเชื่อถือขึ้นควร:
 
@@ -762,13 +824,13 @@ MobileNetV2 weights ปัจจุบันมาจาก ImageNet เหม�
 - วัด ID switch count
 - วัด IDF1 หรือ HOTA
 
-### 12.4 Perspective Distortion
+### 12.5 Perspective Distortion
 
 Pixel distance ไม่เท่ากันทั่วภาพ คนใกล้กล้องขยับเล็กน้อยอาจมีระยะ pixel มากกว่า
 คนไกลกล้อง แนวทางต่อไปคือใช้ Homography แปลง feet point เป็น top-down
 coordinate ก่อนวัดระยะ
 
-### 12.5 Threshold ควรปรับตามกล้องจริง
+### 12.6 Threshold ควรปรับตามกล้องจริง
 
 ค่าต่อไปนี้เป็นค่าตั้งต้นจากโจทย์ปัจจุบัน:
 
@@ -781,6 +843,9 @@ coordinate ก่อนวัดระยะ
 | ReID final-score threshold | `0.70` |
 | ReID distance penalty divisor | `1000` |
 | Pants color mismatch penalty | `0.15` |
+| Lanyard color mismatch penalty | `0.05` |
+| Lanyard temporal voting window | `15 เฟรม` |
+| Blue lanyard-mask maximum coverage | `25%` ของ chest ROI |
 | Pants embedding weight | `0.60` |
 | Head embedding weight | `0.25` |
 | Torso embedding weight | `0.15` |
@@ -831,9 +896,10 @@ train โมเดล, ใช้ dataset หรือ implement orthogonal const
 6. เพิ่ม Custom ReID ด้วย MobileNetV2
 7. เปลี่ยน Whole-Body Embedding เป็น Pants-First Multi-Region Embedding เพื่อรับมือยูนิฟอร์ม
 8. เพิ่ม spatial-temporal constraint ป้องกันการ merge แบบ teleport
-9. เพิ่ม EMA ให้ embedding เสถียรขึ้น
-10. เพิ่ม ROI Exclusion Zone เพื่อตัดพื้นที่ที่ไม่เกี่ยวข้อง
-11. เพิ่ม automated evaluation เพื่ออธิบาย trade-off ด้วยตัวเลข
+9. เพิ่ม Shape-Aware Lanyard Extractor พร้อม temporal voting
+10. เพิ่ม EMA ให้ embedding เสถียรขึ้น
+11. เพิ่ม ROI Exclusion Zone เพื่อตัดพื้นที่ที่ไม่เกี่ยวข้อง
+12. เพิ่ม automated evaluation เพื่ออธิบาย trade-off ด้วยตัวเลข
 
 ผล evaluation 300 เฟรมแสดงว่า pipeline ล่าสุดลด raw Track IDs จาก `40` เหลือ
 `11` หรือลดลง `72.5%` เมื่อเทียบกับ baseline โดยแลกกับ FPS ที่ลดจาก `24.10`
@@ -841,5 +907,6 @@ train โมเดล, ใช้ dataset หรือ implement orthogonal const
 และความถูกต้องของ Longest Stay มากกว่าความเร็วสูงสุดเพียงอย่างเดียว
 
 > หมายเหตุ: ตัวเลข evaluation ข้างต้นวัดก่อนเพิ่ม Pants-First Multi-Region
-> ReID จึงยังใช้เป็นหลักฐานยืนยันผลของการเปลี่ยนแปลงล่าสุดไม่ได้ ต้องรัน
+> ReID และ Shape-Aware Lanyard Extractor จึงยังใช้เป็นหลักฐานยืนยันผลของ
+> การเปลี่ยนแปลงล่าสุดไม่ได้ ต้องรัน
 > `python evaluate_metrics.py` ใหม่และตรวจ overlap scenes ด้วยสายตา

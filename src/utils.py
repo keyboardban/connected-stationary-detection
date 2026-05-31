@@ -44,6 +44,7 @@ def draw_info(
     exclusion_polygon: np.ndarray | None = None,
     is_excluded: bool = False,
     pants_color: str = "Unknown",
+    lanyard_color: str = "Unknown",
 ) -> np.ndarray:
     """Draw the exclusion zone and optional tracking information."""
     if exclusion_polygon is not None:
@@ -60,7 +61,8 @@ def draw_info(
     else:
         box_color = (0, 0, 255) if is_stationary else (0, 255, 0)
         label = (
-            f"ID: {track_id} | Pants: {pants_color} | Torso: {torso_color} | "
+            f"ID: {track_id} | Pants: {pants_color} | "
+            f"Lanyard: {lanyard_color} | Torso: {torso_color} | "
             f"Max Stay: {max_stationary_duration:.2f}s"
         )
 

@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 
 from src.detector import PersonDetector
-from src.features import AppearanceExtractor
+from src.features import AppearanceExtractor, LanyardExtractor
 from src.logic import StationaryTracker
 from src.reid import CustomReID
 from src.utils import (
@@ -60,6 +60,7 @@ def main() -> None:
         pixel_threshold=PIXEL_THRESHOLD,
     )
     appearance_extractor = AppearanceExtractor()
+    lanyard_extractor = LanyardExtractor()
     reid_extractor = CustomReID()
 
     try:
@@ -94,6 +95,7 @@ def main() -> None:
                     centroid = calculate_centroid(box)
                     torso_color = appearance_extractor.get_color(frame, box)
                     pants_color = appearance_extractor.get_pants_color(frame, box)
+                    lanyard_color = lanyard_extractor.get_color(frame, box, track_id)
                     current_embeddings = reid_extractor.get_embedding(frame, box)
                     is_stationary, max_duration = stationary_tracker.update_track(
                         track_id,
@@ -101,6 +103,7 @@ def main() -> None:
                         current_embeddings,
                         torso_color,
                         pants_color,
+                        lanyard_color,
                     )
                     draw_info(
                         frame,
@@ -110,6 +113,7 @@ def main() -> None:
                         max_duration,
                         is_stationary,
                         pants_color=pants_color,
+                        lanyard_color=lanyard_color,
                     )
             else:
                 stationary_tracker.mark_lost_ids(active_ids)

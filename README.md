@@ -10,6 +10,7 @@ and runs Ultralytics inference with `device="mps"`.
 - Occlusion-tuned BoT-SORT tracking
 - Multi-region MobileNetV2 embeddings with pants-first ID recovery
 - Pants-color fallback matching with low-weight torso support
+- Shape-aware lanyard detection with temporal voting
 - Sliding-window stationary-duration analysis
 - Polygon exclusion zone for ignoring people inside a configured area
 - Annotated MP4 output with track IDs and stationary durations

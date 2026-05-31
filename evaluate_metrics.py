@@ -11,7 +11,7 @@ import pandas as pd
 import torch
 
 from src.detector import PersonDetector
-from src.features import AppearanceExtractor
+from src.features import AppearanceExtractor, LanyardExtractor
 from src.logic import StationaryTracker
 from src.reid import CustomReID
 from src.utils import calculate_centroid
@@ -114,6 +114,7 @@ def run_evaluation(
     tracker_logic: StationaryTracker | None = None
     appearance_extractor: AppearanceExtractor | None = None
     reid_extractor: CustomReID | None = None
+    lanyard_extractor: LanyardExtractor | None = None
     if config["reid_enabled"]:
         tracker_logic = StationaryTracker(
             fps=fps,
@@ -122,6 +123,7 @@ def run_evaluation(
         )
         appearance_extractor = AppearanceExtractor()
         reid_extractor = CustomReID(device="mps")
+        lanyard_extractor = LanyardExtractor()
 
     unique_track_ids: set[int] = set()
     processed_frames = 0
@@ -148,15 +150,27 @@ def run_evaluation(
 
                 if tracker_logic is not None:
                     tracker_logic.mark_lost_ids(active_ids)
-                    if appearance_extractor is None or reid_extractor is None:
+                    if (
+                        appearance_extractor is None
+                        or reid_extractor is None
+                        or lanyard_extractor is None
+                    ):
                         raise RuntimeError("Custom ReID dependencies were not initialized.")
                     for box, track_id in zip(xyxy_boxes, track_ids):
                         centroid = calculate_centroid(box)
                         torso_color = appearance_extractor.get_color(frame, box)
                         pants_color = appearance_extractor.get_pants_color(frame, box)
+                        lanyard_color = lanyard_extractor.get_color(
+                            frame, box, track_id
+                        )
                         embeddings = reid_extractor.get_embedding(frame, box)
                         tracker_logic.update_track(
-                            track_id, centroid, embeddings, torso_color, pants_color
+                            track_id,
+                            centroid,
+                            embeddings,
+                            torso_color,
+                            pants_color,
+                            lanyard_color,
                         )
             elif tracker_logic is not None:
                 tracker_logic.mark_lost_ids(active_ids)

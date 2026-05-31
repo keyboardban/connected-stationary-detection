@@ -22,6 +22,7 @@ class TrackState:
     embeddings: RegionEmbeddings = field(default_factory=RegionEmbeddings)
     torso_color: str = "Unknown"
     pants_color: str = "Unknown"
+    lanyard_color: str = "Unknown"
     current_frames: int = 0
     max_frames: int = 0
     is_stationary: bool = False
@@ -40,6 +41,7 @@ class StationaryTracker:
         "torso": 0.15,
     }
     PANTS_COLOR_MISMATCH_PENALTY = 0.15
+    LANYARD_COLOR_MISMATCH_PENALTY = 0.05
 
     def __init__(
         self,
@@ -77,6 +79,7 @@ class StationaryTracker:
         current_embeddings: RegionEmbeddings,
         torso_color: str,
         pants_color: str,
+        lanyard_color: str,
     ) -> TrackState:
         if track_id in self.orphaned_tracks:
             state = self.orphaned_tracks.pop(track_id)
@@ -85,11 +88,11 @@ class StationaryTracker:
             return state
 
         best_orphan_id = self._attempt_reid_recovery(
-            current_embeddings, centroid, pants_color
+            current_embeddings, centroid, pants_color, lanyard_color
         )
         if best_orphan_id is None:
             best_orphan_id = self._find_color_fallback(
-                centroid, pants_color, torso_color
+                centroid, pants_color, lanyard_color, torso_color
             )
 
         if best_orphan_id is None:
@@ -144,6 +147,7 @@ class StationaryTracker:
         current_embeddings: RegionEmbeddings,
         current_centroid: np.ndarray,
         pants_color: str,
+        lanyard_color: str,
     ) -> int | None:
         """Recover the best nearby orphan using spatial-temporal constraints.
 
@@ -175,6 +179,12 @@ class StationaryTracker:
                 and pants_color != orphan.pants_color
             ):
                 color_penalty = self.PANTS_COLOR_MISMATCH_PENALTY
+            if (
+                lanyard_color != "Unknown"
+                and orphan.lanyard_color != "Unknown"
+                and lanyard_color != orphan.lanyard_color
+            ):
+                color_penalty += self.LANYARD_COLOR_MISMATCH_PENALTY
 
             final_score = similarity - distance_penalty - color_penalty
             if final_score > highest_score:
@@ -189,11 +199,17 @@ class StationaryTracker:
         self,
         centroid: np.ndarray,
         pants_color: str,
+        lanyard_color: str,
         torso_color: str,
     ) -> int | None:
-        """Use pants color first, then torso color, when embedding matching fails."""
+        """Use pants, lanyard, then torso color when embedding matching fails."""
         best_orphan_id = self._find_nearby_color_match(
             centroid, pants_color, color_attribute="pants_color"
+        )
+        if best_orphan_id is not None:
+            return best_orphan_id
+        best_orphan_id = self._find_nearby_color_match(
+            centroid, lanyard_color, color_attribute="lanyard_color"
         )
         if best_orphan_id is not None:
             return best_orphan_id
@@ -256,6 +272,7 @@ class StationaryTracker:
         current_embeddings: RegionEmbeddings,
         torso_color: str,
         pants_color: str,
+        lanyard_color: str,
     ) -> tuple[bool, float]:
         """Update one track and return stationary status and maximum seconds."""
         centroid_array = np.asarray(centroid, dtype=np.float64)
@@ -270,6 +287,7 @@ class StationaryTracker:
                 current_embeddings,
                 torso_color,
                 pants_color,
+                lanyard_color,
             )
 
         state.last_centroid = centroid_array
@@ -280,6 +298,8 @@ class StationaryTracker:
             state.torso_color = torso_color
         if pants_color != "Unknown":
             state.pants_color = pants_color
+        if lanyard_color != "Unknown":
+            state.lanyard_color = lanyard_color
         state.history.append(centroid_array)
 
         if len(state.history) == self.history_size:
