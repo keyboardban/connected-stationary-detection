@@ -9,7 +9,7 @@ import numpy as np
 
 
 class AppearanceExtractor:
-    """Extract the dominant shirt color from a person's torso region."""
+    """Extract dominant colors from clothing regions."""
 
     def __init__(self, noise_threshold: int = 20) -> None:
         if noise_threshold < 1:
@@ -58,8 +58,14 @@ class AppearanceExtractor:
             ),
         }
 
-    def get_color(self, frame: np.ndarray, box: Sequence[float]) -> str:
-        """Return the dominant primary color in the torso ROI."""
+    def _get_region_color(
+        self,
+        frame: np.ndarray,
+        box: Sequence[float],
+        start_ratio: float,
+        end_ratio: float,
+    ) -> str:
+        """Return the dominant primary color in one vertical body region."""
         if frame is None or frame.size == 0 or len(box) != 4:
             return "Unknown"
 
@@ -74,9 +80,9 @@ class AppearanceExtractor:
             return "Unknown"
 
         box_height = y2 - y1
-        torso_y1 = y1 + int(round(box_height * 0.25))
-        torso_y2 = y1 + int(round(box_height * 0.75))
-        roi = frame[torso_y1:torso_y2, x1:x2]
+        roi_y1 = y1 + int(round(box_height * start_ratio))
+        roi_y2 = y1 + int(round(box_height * end_ratio))
+        roi = frame[roi_y1:roi_y2, x1:x2]
         if roi.size == 0:
             return "Unknown"
 
@@ -94,3 +100,11 @@ class AppearanceExtractor:
         if dominant_pixels < self.noise_threshold:
             return "Unknown"
         return dominant_color
+
+    def get_color(self, frame: np.ndarray, box: Sequence[float]) -> str:
+        """Return the dominant torso color as a low-weight fallback feature."""
+        return self._get_region_color(frame, box, 0.25, 0.55)
+
+    def get_pants_color(self, frame: np.ndarray, box: Sequence[float]) -> str:
+        """Return the dominant pants color for uniform-resistant matching."""
+        return self._get_region_color(frame, box, 0.55, 0.95)

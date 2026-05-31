@@ -153,9 +153,10 @@ def run_evaluation(
                     for box, track_id in zip(xyxy_boxes, track_ids):
                         centroid = calculate_centroid(box)
                         torso_color = appearance_extractor.get_color(frame, box)
-                        embedding = reid_extractor.get_embedding(frame, box)
+                        pants_color = appearance_extractor.get_pants_color(frame, box)
+                        embeddings = reid_extractor.get_embedding(frame, box)
                         tracker_logic.update_track(
-                            track_id, centroid, embedding, torso_color
+                            track_id, centroid, embeddings, torso_color, pants_color
                         )
             elif tracker_logic is not None:
                 tracker_logic.mark_lost_ids(active_ids)

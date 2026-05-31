@@ -93,9 +93,14 @@ def main() -> None:
 
                     centroid = calculate_centroid(box)
                     torso_color = appearance_extractor.get_color(frame, box)
-                    current_embedding = reid_extractor.get_embedding(frame, box)
+                    pants_color = appearance_extractor.get_pants_color(frame, box)
+                    current_embeddings = reid_extractor.get_embedding(frame, box)
                     is_stationary, max_duration = stationary_tracker.update_track(
-                        track_id, centroid, current_embedding, torso_color
+                        track_id,
+                        centroid,
+                        current_embeddings,
+                        torso_color,
+                        pants_color,
                     )
                     draw_info(
                         frame,
@@ -104,6 +109,7 @@ def main() -> None:
                         torso_color,
                         max_duration,
                         is_stationary,
+                        pants_color=pants_color,
                     )
             else:
                 stationary_tracker.mark_lost_ids(active_ids)

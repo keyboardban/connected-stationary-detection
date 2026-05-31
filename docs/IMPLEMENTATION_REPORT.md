@@ -12,7 +12,7 @@ Track ID (`ID switching`) เสื้อยูนิฟอร์มที่ม
 
 1. ใช้ YOLOv8 Instance Segmentation ตรวจจับบุคคล
 2. ใช้ BoT-SORT ที่ปรับค่าให้จำ Track ที่หายไปได้นานขึ้น
-3. ใช้ MobileNetV2 สกัด Head Embedding สำหรับ Custom Re-Identification
+3. ใช้ MobileNetV2 สกัด Multi-Region Embeddings สำหรับ Custom Re-Identification
 4. ใช้ตำแหน่งบนภาพเป็นข้อจำกัดทางฟิสิกส์ ป้องกันการจับคู่คนที่ดูเหมือนกัน
    แต่เคลื่อนที่ไกลผิดธรรมชาติ
 5. ใช้สีเสื้อบริเวณลำตัวเป็น fallback feature
@@ -64,10 +64,10 @@ flowchart TD
     B --> C["Custom BoT-SORT<br/>track_buffer=90"]
     C --> D{"Feet point อยู่ใน<br/>Exclusion Polygon?"}
     D -- "Yes" --> E["วาดกล่องสีเทา<br/>ไม่นับเวลา"]
-    D -- "No" --> F["Head ROI 0%-25%"]
-    F --> G["MobileNetV2 Head Embedding<br/>device=mps"]
-    D -- "No" --> H["Torso ROI 25%-75%"]
-    H --> I["HSV Torso Color"]
+    D -- "No" --> F["Head 0%-25%<br/>Pants 55%-95%<br/>Torso 25%-55%"]
+    F --> G["Batched MobileNetV2<br/>Multi-Region Embeddings<br/>device=mps"]
+    D -- "No" --> H["HSV Regional Colors"]
+    H --> I["Pants Color<br/>Torso Color"]
     G --> J["Custom ReID Recovery"]
     I --> J
     J --> K["Spatial Constraint<br/>distance <= 200 px"]
@@ -82,7 +82,7 @@ flowchart TD
 | --- | --- |
 | `src/detector.py` | โหลด YOLO และรัน tracking เฉพาะ class `person` |
 | `custom_botsort.yaml` | ปรับ BoT-SORT สำหรับ occlusion |
-| `src/reid.py` | สกัด normalized Head Embedding ด้วย MobileNetV2 |
+| `src/reid.py` | สกัด normalized Head, Pants และ Torso Embeddings ด้วย MobileNetV2 แบบ batched |
 | `src/features.py` | สกัดสีเสื้อบริเวณลำตัวด้วย HSV |
 | `src/logic.py` | จัดการ Stationary State, orphan tracks, Custom ReID และ fallback matching |
 | `src/utils.py` | คำนวณ centroid, feet point, polygon test และวาดข้อมูลลงเฟรม |
@@ -227,17 +227,19 @@ centroid และ crop ROI แต่ detector รุ่น segmentation ช่�
 2. ตัด classifier head ด้วย `nn.Identity()`
 3. ย้ายโมเดลไป `device="mps"`
 4. ตั้ง `eval()`
-5. Resize crop เป็น `256 x 128`
-6. แปลง BGR เป็น RGB
-7. Normalize ด้วย ImageNet mean และ standard deviation
-8. Forward pass ด้วย `torch.inference_mode()`
-9. Normalize embedding ด้วย L2 norm
-10. Detach embedding กลับมาไว้บน CPU
+5. Crop หลาย ROI ได้แก่ Head, Pants และ Torso
+6. Resize แต่ละ crop เป็น `256 x 128`
+7. แปลง BGR เป็น RGB
+8. Normalize ด้วย ImageNet mean และ standard deviation
+9. รวม ROI ที่ valid เป็น batch เดียว
+10. Forward pass บน MPS ด้วย `torch.inference_mode()`
+11. Normalize embedding แต่ละ region ด้วย L2 norm
+12. Detach embeddings กลับมาไว้บน CPU
 
 การแยกโมดูล Custom ReID ทำให้ควบคุมกติกาการ merge ID ได้ละเอียดกว่าเปิด ReID
 ภายใน tracker อย่างเดียว
 
-### 4.8 จาก Whole-Body Embedding เป็น Head-Only Embedding
+### 4.8 จาก Head-Only เป็น Pants-First Multi-Region Embedding
 
 Whole-body appearance embedding ยังมีข้อจำกัดเมื่อทุกคนใส่ยูนิฟอร์มเหมือนกัน
 เพราะพื้นที่เสื้อกินสัดส่วนภาพมากและทำให้ embedding ของคนหลายคนคล้ายกัน
@@ -250,37 +252,52 @@ Whole-body appearance embedding ยังมีข้อจำกัดเมื
 
 สำหรับ Hackathon 24 ชั่วโมงนี้ เราไม่ได้ reproduce learned feature separation,
 orthogonal constraints หรือ training pipeline ของ paper โดยตรง แต่สร้าง
-**practical real-time heuristic** ที่นำหลักคิดเดียวกันมาปรับใช้: ตัด pixel
-บริเวณลำตัวซึ่งมักเป็นยูนิฟอร์มออกจาก input ของ ReID encoder ตั้งแต่ต้นทาง
+**practical real-time heuristic** ที่ลดน้ำหนักบริเวณเสื้อซึ่งเป็นยูนิฟอร์ม
+และเน้นบริเวณที่แตกต่างกันจริงในวิดีโอนี้
 
-จึงเปลี่ยน crop ใน `CustomReID.get_embedding()` เป็นเฉพาะส่วนหัวด้านบน 25%
-ของ Bounding Box:
+การทดลองพบข้อมูล domain-specific เพิ่มเติม: ทุกคนใส่เสื้อเหมือนกัน แต่กางเกง
+แตกต่างกัน จึงใช้สาม ROI ใน `CustomReID.get_embedding()`:
 
 ```text
-head_y2 = y1 + int(height * 0.25)
-head_crop = frame[y1:head_y2, x1:x2]
+Head:  0%-25%  ของความสูง Bounding Box
+Pants: 55%-95% ของความสูง Bounding Box
+Torso: 25%-55% ของความสูง Bounding Box
 ```
+
+น้ำหนัก similarity:
+
+```text
+multi_region_similarity =
+    0.25 * head_similarity
+  + 0.60 * pants_similarity
+  + 0.15 * torso_similarity
+```
+
+หากบาง region ถูกบัง ระบบจะใช้เฉพาะ region ที่มี embedding และ normalize
+น้ำหนักใหม่ตาม region ที่ใช้งานได้
 
 ข้อดี:
 
-- ลดอิทธิพลของเสื้อยูนิฟอร์ม
-- เพิ่มน้ำหนักให้ทรงผม รูปร่างศีรษะ หมวก และ visual cues บริเวณใบหน้า
-- ช่วยแยกบุคคลในสถานการณ์ที่สีเสื้อเหมือนกัน
+- Pants Embedding เป็น cue หลัก เพราะกางเกงแตกต่างกันและมีพื้นที่ pixel มาก
+- Head Embedding ช่วยแยกกรณีที่กางเกงใกล้เคียงกัน
+- Torso Embedding ยังมีไว้เป็น fallback แต่ให้น้ำหนักต่ำ เพราะเสื้อเหมือนกัน
+- ส่งทั้งสาม crop เข้า MobileNetV2 เป็น batch เดียว ลด overhead ของ model launch
+- Pants HSV Color ช่วยลงโทษ match ที่กางเกงคนละสี และใช้เป็น fallback ได้
 
 ข้อควรระวัง:
 
-- นี่คือ head appearance embedding ไม่ใช่ระบบ Face Recognition
-- หากใบหน้ามีขนาดเล็กมาก หันหลัง หรือถูกบัง ผล embedding อาจไม่เสถียร
+- นี่คือ regional appearance embedding ไม่ใช่ระบบ Face Recognition
+- หากขาถูกบัง Pants Embedding อาจหายไป ระบบจะ fallback ไป region อื่น
 - MobileNetV2 ที่ใช้ weights ทั่วไปไม่ได้ fine-tune บน person ReID dataset
 
 ### 4.9 เพิ่ม Spatial-Temporal Constraint ป้องกัน Teleport
 
-การเทียบ embedding อย่างเดียวอาจ merge ผิด เมื่อคนหลายคนมี head appearance
+การเทียบ embedding อย่างเดียวอาจ merge ผิด เมื่อคนหลายคนมี appearance
 คล้ายกัน ระบบจึงเพิ่มข้อจำกัดด้านตำแหน่งใน `src/logic.py`
 
-กติกานี้ทำหน้าที่เสริม Head-Only ReID: Head Embedding ลด uniform bias ขณะที่
-Spatial-Temporal Distance Penalty ลดโอกาสจับคู่ผิดระหว่างคนที่มีทรงผมหรือ
-ลักษณะศีรษะคล้ายกัน แต่อยู่คนละตำแหน่งในฉาก
+กติกานี้ทำหน้าที่เสริม Pants-First Multi-Region ReID: regional embeddings
+ลด uniform bias ขณะที่ Spatial-Temporal Distance Penalty ลดโอกาสจับคู่ผิด
+ระหว่างคนที่มีลักษณะคล้ายกัน แต่อยู่คนละตำแหน่งในฉาก
 
 ขั้นตอน recovery:
 
@@ -299,7 +316,8 @@ if distance > 200:
     reject candidate
 
 distance_penalty = distance / 1000
-final_score = cosine_similarity - distance_penalty
+pants_color_penalty = 0.15 หากสีที่ทราบแตกต่างกัน
+final_score = multi_region_similarity - distance_penalty - pants_color_penalty
 ```
 
 เหตุผลเชิงฟิสิกส์:
@@ -308,13 +326,14 @@ final_score = cosine_similarity - distance_penalty
 - embedding ที่คล้ายกันแต่ตำแหน่งห่างควรมีความน่าเชื่อถือลดลง
 - ช่วยลด false merge เมื่อหลายคนใส่ชุดคล้ายกัน
 
-### 4.10 เพิ่ม EMA สำหรับ Embedding
+### 4.10 เพิ่ม EMA สำหรับ Embedding แต่ละ Region
 
 ระบบไม่แทนที่ embedding เดิมด้วยภาพล่าสุดทันที แต่ใช้ Exponential Moving
 Average:
 
 ```text
-new_embedding = normalize(0.9 * old_embedding + 0.1 * current_embedding)
+new_region_embedding =
+    normalize(0.9 * old_region_embedding + 0.1 * current_region_embedding)
 ```
 
 ข้อดี:
@@ -388,11 +407,11 @@ cv2.pointPolygonTest(polygon, feet_point, False) > 0
    - ไม่อัปเดต stationary timer
 8. หากอยู่นอก polygon:
    - คำนวณ centroid
-   - สกัด Torso Color
-   - สกัด Head Embedding
+   - สกัด Torso Color และ Pants Color
+   - สกัด Head, Pants และ Torso Embeddings ด้วย batched MPS inference
    - พยายาม recover ID ด้วย distance-penalized cosine similarity
-   - fallback ไป Torso Color + proximity หาก embedding match ไม่สำเร็จ
-   - อัปเดต embedding ด้วย EMA
+   - fallback ไป Pants Color ก่อน Torso Color หาก embedding match ไม่สำเร็จ
+   - อัปเดต embedding ของแต่ละ region ด้วย EMA
    - อัปเดต sliding-window stationary state
 9. วาด Bounding Box และข้อมูลลงบนเฟรม
 10. เขียนเฟรมลง `outputs/result.mp4`
@@ -409,13 +428,14 @@ cv2.pointPolygonTest(polygon, feet_point, False) > 0
 | Bounding Box สีเขียว | บุคคลกำลังเคลื่อนที่ หรือ history ยังไม่เต็ม window |
 | Bounding Box สีแดง | บุคคลอยู่ในสถานะ stationary |
 | `ID: ...` | Track ID ปัจจุบันจาก tracker |
+| `Pants: ...` | สีกางเกงเด่นที่สกัดจาก HSV |
 | `Torso: ...` | สีเสื้อเด่นที่สกัดจาก HSV |
 | `Max Stay: ...s` | เวลานิ่งต่อเนื่องสูงสุดของ identity นั้น |
 
 ตัวอย่าง label:
 
 ```text
-ID: 12 | Torso: Blue | Max Stay: 8.47s
+ID: 12 | Pants: Purple | Torso: Blue | Max Stay: 8.47s
 ```
 
 ข้อสำคัญ: Track ID ที่แสดงบนวิดีโออาจเปลี่ยนหลัง tracker สร้าง ID ใหม่ แต่
@@ -517,9 +537,9 @@ Custom ReID จะพยายามย้าย stationary history จาก ID
 - YOLOv8m Instance Segmentation
 - Custom BoT-SORT
 - Lost-track buffer `90` เฟรม
-- Custom MobileNetV2 Head ReID
+- Custom MobileNetV2 Pants-First Multi-Region ReID
 - Spatial constraint และ distance penalty
-- Torso Color fallback
+- Pants Color fallback พร้อม Torso Color fallback ลำดับรอง
 
 ผล:
 
@@ -716,14 +736,15 @@ outputs/evaluation_metrics.csv
 
 ## 12. ข้อจำกัดและงานที่ควรทำต่อ
 
-### 12.1 Head ROI อาจเล็กเกินไปในบางเฟรม
+### 12.1 Pants ROI และ Head ROI อาจถูกบังในบางเฟรม
 
-เมื่อคนอยู่ไกลกล้อง พื้นที่หัวอาจมี pixel น้อยมาก การ resize เป็น `256 x 128`
-ไม่ได้สร้างรายละเอียดใหม่ จึงควรทดลอง:
+เมื่อคนซ้อนกัน พื้นที่ขาหรือหัวอาจถูกบังบางส่วน ระบบจึงรวมหลาย region และ
+normalize น้ำหนักใหม่ตาม region ที่มองเห็น อย่างไรก็ตามควรทดลอง:
 
 - เพิ่ม minimum crop size
 - ขยาย Head ROI เป็น 30%-35%
-- ผสม head embedding กับ torso embedding แบบ weighted fusion
+- ปรับ Pants ROI ให้เหมาะกับมุมกล้อง
+- วัดคุณภาพ pants color ภายใต้เงาและ motion blur
 
 ### 12.2 MobileNetV2 ยังไม่ใช่ Person ReID Model เฉพาะทาง
 
@@ -759,6 +780,10 @@ coordinate ก่อนวัดระยะ
 | ReID teleport limit | `200 px` |
 | ReID final-score threshold | `0.70` |
 | ReID distance penalty divisor | `1000` |
+| Pants color mismatch penalty | `0.15` |
+| Pants embedding weight | `0.60` |
+| Head embedding weight | `0.25` |
+| Torso embedding weight | `0.15` |
 | Orphan lifetime | `3 วินาที` |
 
 เมื่อเปลี่ยนมุมกล้อง, resolution หรือ FPS ควร calibrate ค่าเหล่านี้ใหม่
@@ -780,8 +805,8 @@ real-time adaptation ที่เรียบง่ายกว่า:
 
 | แนวคิด | งานวิจัย PU-ReID | Hackathon Adaptation |
 | --- | --- | --- |
-| ลด uniform bias | Learned Uniform Feature Separation | Crop เฉพาะ Head/Shoulder ROI ด้านบน 25% |
-| เรียนรู้ identity cues | Learned framework และ constraints | MobileNetV2 ImageNet embedding |
+| ลด uniform bias | Learned Uniform Feature Separation | ลดน้ำหนัก Torso และเน้น Pants + Head ROI |
+| เรียนรู้ identity cues | Learned framework และ constraints | Batched MobileNetV2 multi-region ImageNet embeddings |
 | ลด false matching | Framework-level feature learning | Spatial gate `distance <= 200 px` |
 | จัดอันดับ candidate | Learned representation | `cosine_similarity - distance / 1000` |
 | เป้าหมาย | คุณภาพ PU-ReID เชิงงานวิจัย | Pipeline ที่รันได้จริงภายในเวลา Hackathon |
@@ -804,7 +829,7 @@ train โมเดล, ใช้ dataset หรือ implement orthogonal const
 4. เปลี่ยนเป็น Instance Segmentation เพื่อช่วยแยกคนที่ซ้อนกัน
 5. ปรับ BoT-SORT ให้จำ lost track ได้นานขึ้น
 6. เพิ่ม Custom ReID ด้วย MobileNetV2
-7. เปลี่ยน Whole-Body Embedding เป็น Head-Only Embedding เพื่อรับมือยูนิฟอร์ม
+7. เปลี่ยน Whole-Body Embedding เป็น Pants-First Multi-Region Embedding เพื่อรับมือยูนิฟอร์ม
 8. เพิ่ม spatial-temporal constraint ป้องกันการ merge แบบ teleport
 9. เพิ่ม EMA ให้ embedding เสถียรขึ้น
 10. เพิ่ม ROI Exclusion Zone เพื่อตัดพื้นที่ที่ไม่เกี่ยวข้อง
@@ -814,3 +839,7 @@ train โมเดล, ใช้ dataset หรือ implement orthogonal const
 `11` หรือลดลง `72.5%` เมื่อเทียบกับ baseline โดยแลกกับ FPS ที่ลดจาก `24.10`
 เหลือ `11.20` ระบบจึงเหมาะกับโจทย์ที่ให้ความสำคัญกับความต่อเนื่องของ identity
 และความถูกต้องของ Longest Stay มากกว่าความเร็วสูงสุดเพียงอย่างเดียว
+
+> หมายเหตุ: ตัวเลข evaluation ข้างต้นวัดก่อนเพิ่ม Pants-First Multi-Region
+> ReID จึงยังใช้เป็นหลักฐานยืนยันผลของการเปลี่ยนแปลงล่าสุดไม่ได้ ต้องรัน
+> `python evaluate_metrics.py` ใหม่และตรวจ overlap scenes ด้วยสายตา

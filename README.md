@@ -8,8 +8,8 @@ and runs Ultralytics inference with `device="mps"`.
 
 - YOLOv8 instance segmentation for overlapping people
 - Occlusion-tuned BoT-SORT tracking
-- Custom MobileNetV2 appearance embeddings for ID recovery
-- Torso-color fallback matching
+- Multi-region MobileNetV2 embeddings with pants-first ID recovery
+- Pants-color fallback matching with low-weight torso support
 - Sliding-window stationary-duration analysis
 - Polygon exclusion zone for ignoring people inside a configured area
 - Annotated MP4 output with track IDs and stationary durations
