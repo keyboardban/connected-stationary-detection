@@ -13,7 +13,7 @@ from torchvision.models import mobilenet_v2
 
 
 class CustomReID:
-    """Extract normalized person appearance embeddings on Apple Silicon MPS."""
+    """Extract uniform-invariant head embeddings on Apple Silicon MPS."""
 
     def __init__(self, device: str = "mps") -> None:
         if device != "mps":
@@ -35,7 +35,15 @@ class CustomReID:
     def get_embedding(
         self, frame: np.ndarray, box: Sequence[float]
     ) -> torch.Tensor | None:
-        """Return a normalized CPU embedding for one cropped person."""
+        """Return a normalized CPU embedding from the head-and-shoulder ROI.
+
+        This is a real-time heuristic inspired by the Uniform Feature Separation
+        concept described in the ACM 2024 PU-ReID study. It is intentionally not
+        a reproduction of that paper's learned separation framework: cropping
+        the top 25% removes the shared uniform-dominated torso pixels so the
+        embedding is driven more strongly by head, hair, face, and shoulder
+        appearance cues that can distinguish people wearing identical clothing.
+        """
         if frame is None or frame.size == 0 or len(box) != 4:
             return None
 
@@ -44,6 +52,8 @@ class CustomReID:
         if x2 <= x1 or height <= 0:
             return None
 
+        # Ignore the torso on purpose: uniform pixels can create misleadingly
+        # high similarity scores when multiple targets wear identical clothing.
         head_y2 = y1 + int(height * 0.25)
         crop = frame[
             max(0, y1) : min(frame.shape[0], head_y2),

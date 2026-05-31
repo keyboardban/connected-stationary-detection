@@ -242,6 +242,17 @@ centroid และ crop ROI แต่ detector รุ่น segmentation ช่�
 Whole-body appearance embedding ยังมีข้อจำกัดเมื่อทุกคนใส่ยูนิฟอร์มเหมือนกัน
 เพราะพื้นที่เสื้อกินสัดส่วนภาพมากและทำให้ embedding ของคนหลายคนคล้ายกัน
 
+แนวทางนี้ได้รับแรงบันดาลใจจากงานวิจัย
+[*Person in Uniforms Re-Identification*](https://doi.org/10.1145/3703839)
+ใน ACM Transactions on Multimedia Computing, Communications, and Applications
+ซึ่งเสนอแนวคิด Uniform Feature Separation เพื่อลดอิทธิพลของฟีเจอร์ยูนิฟอร์ม
+และให้ความสำคัญกับ non-uniform cues มากขึ้น
+
+สำหรับ Hackathon 24 ชั่วโมงนี้ เราไม่ได้ reproduce learned feature separation,
+orthogonal constraints หรือ training pipeline ของ paper โดยตรง แต่สร้าง
+**practical real-time heuristic** ที่นำหลักคิดเดียวกันมาปรับใช้: ตัด pixel
+บริเวณลำตัวซึ่งมักเป็นยูนิฟอร์มออกจาก input ของ ReID encoder ตั้งแต่ต้นทาง
+
 จึงเปลี่ยน crop ใน `CustomReID.get_embedding()` เป็นเฉพาะส่วนหัวด้านบน 25%
 ของ Bounding Box:
 
@@ -266,6 +277,10 @@ head_crop = frame[y1:head_y2, x1:x2]
 
 การเทียบ embedding อย่างเดียวอาจ merge ผิด เมื่อคนหลายคนมี head appearance
 คล้ายกัน ระบบจึงเพิ่มข้อจำกัดด้านตำแหน่งใน `src/logic.py`
+
+กติกานี้ทำหน้าที่เสริม Head-Only ReID: Head Embedding ลด uniform bias ขณะที่
+Spatial-Temporal Distance Penalty ลดโอกาสจับคู่ผิดระหว่างคนที่มีทรงผมหรือ
+ลักษณะศีรษะคล้ายกัน แต่อยู่คนละตำแหน่งในฉาก
 
 ขั้นตอน recovery:
 
@@ -750,7 +765,35 @@ coordinate ก่อนวัดระยะ
 
 ---
 
-## 13. บทสรุป
+## 13. งานวิจัยที่ใช้เป็นแรงบันดาลใจ
+
+ระบบนี้ใช้แนวคิดจากงานวิจัยต่อไปนี้เป็นแรงบันดาลใจเชิงการออกแบบ:
+
+> Chong-Yang Xiang, Xiao Wu, Jun-Yan He, Zhaoquan Yuan, and Tingquan He.
+> *Person in Uniforms Re-Identification*.
+> ACM Transactions on Multimedia Computing, Communications, and Applications.
+> DOI: [10.1145/3703839](https://doi.org/10.1145/3703839)
+
+งานวิจัยมุ่งลดผลกระทบจากเสื้อยูนิฟอร์มที่คล้ายกันและเรียนรู้ non-uniform
+features ที่ช่วยแยกบุคคลได้ดีขึ้น ส่วน implementation ในโปรเจกต์นี้เป็น
+real-time adaptation ที่เรียบง่ายกว่า:
+
+| แนวคิด | งานวิจัย PU-ReID | Hackathon Adaptation |
+| --- | --- | --- |
+| ลด uniform bias | Learned Uniform Feature Separation | Crop เฉพาะ Head/Shoulder ROI ด้านบน 25% |
+| เรียนรู้ identity cues | Learned framework และ constraints | MobileNetV2 ImageNet embedding |
+| ลด false matching | Framework-level feature learning | Spatial gate `distance <= 200 px` |
+| จัดอันดับ candidate | Learned representation | `cosine_similarity - distance / 1000` |
+| เป้าหมาย | คุณภาพ PU-ReID เชิงงานวิจัย | Pipeline ที่รันได้จริงภายในเวลา Hackathon |
+
+ข้อควรระวัง: โปรเจกต์นี้ไม่ควรเรียกว่า reproduction ของ paper เพราะไม่ได้
+train โมเดล, ใช้ dataset หรือ implement orthogonal constraints ตาม framework
+ต้นฉบับ แต่เป็น engineering adaptation ที่ได้รับแรงบันดาลใจจาก core concept
+ของ paper
+
+---
+
+## 14. บทสรุป
 
 ระบบเริ่มจาก Detector + Tracker แบบเรียบง่าย แล้วค่อยเพิ่มความสามารถตาม error
 ที่พบจริง:

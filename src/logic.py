@@ -92,7 +92,13 @@ class StationaryTracker:
         current_embedding: torch.Tensor | None,
         current_centroid: np.ndarray,
     ) -> int | None:
-        """Recover the best nearby orphan using distance-penalized similarity."""
+        """Recover the best nearby orphan using spatial-temporal constraints.
+
+        Head embeddings reduce uniform bias but can still be visually similar.
+        The distance gate rejects physically implausible teleports, while the
+        continuous distance penalty prefers an orphan that could realistically
+        move to the current centroid during a short occlusion.
+        """
         if current_embedding is None:
             return None
 
@@ -109,13 +115,17 @@ class StationaryTracker:
                     old_embedding.unsqueeze(0),
                 ).item()
             )
-            last_centroid = (
-                orphan.history[-1] if orphan.history else orphan.last_centroid
+            # ReID alone is not enough for identical uniforms. Complement the
+            # head-only feature with the last known image-plane position.
+            distance = float(
+                np.linalg.norm(current_centroid - orphan.last_centroid)
             )
-            distance = float(np.linalg.norm(current_centroid - last_centroid))
             if distance > 200.0:
+                # A short-lived orphan cannot teleport across the camera view.
                 continue
 
+            # Prefer plausible nearby matches even when head embeddings are
+            # similarly strong for multiple uniformed targets.
             distance_penalty = distance / 1000.0
             final_score = similarity - distance_penalty
             if final_score > highest_score:
