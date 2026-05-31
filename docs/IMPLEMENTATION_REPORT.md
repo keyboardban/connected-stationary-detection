@@ -529,11 +529,11 @@ Custom ReID จะพยายามย้าย stationary history จาก ID
 
 ไฟล์ `evaluate_metrics.py` เปรียบเทียบ 3 ระดับของ pipeline บน 300 เฟรมแรก:
 
-| Experiment | Detection Model | Tracker | Custom ReID | Total Unique IDs | Average FPS |
-| --- | --- | --- | --- | ---: | ---: |
-| Config A (Baseline) | `yolov8m.pt` | `bytetrack.yaml` | ปิด | 40 | 24.10 |
-| Config B (Intermediate) | `yolov8m-pose.pt` | `botsort.yaml` | ปิด | 20 | 18.43 |
-| Config C (Ours) | `yolov8m-seg.pt` | `custom_botsort.yaml` | เปิด | 11 | 11.20 |
+| Experiment | Detection Model | Tracker | Custom ReID | Raw Tracker IDs | Logical IDs After Recovery | ReID Merges | Average FPS |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: |
+| Config A (Baseline) | `yolov8m.pt` | `bytetrack.yaml` | ปิด | 40 | 40 | 0 | 20.95 |
+| Config B (Intermediate) | `yolov8m-pose.pt` | `botsort.yaml` | ปิด | 20 | 20 | 0 | 18.12 |
+| Config C (Ours) | `yolov8m-seg.pt` | `custom_botsort.yaml` | เปิด | 11 | 10 | 1 | 8.45 |
 
 ### 8.1 Config A: Baseline
 
@@ -545,8 +545,8 @@ Custom ReID จะพยายามย้าย stationary history จาก ID
 
 ผล:
 
-- เร็วที่สุดในชุด evaluation ที่ `24.10 FPS`
-- สร้าง `40 IDs`
+- เร็วที่สุดในชุด evaluation ที่ `20.95 FPS`
+- สร้าง `40 raw IDs`
 
 การตีความ:
 
@@ -564,13 +564,13 @@ Custom ReID จะพยายามย้าย stationary history จาก ID
 
 ผล:
 
-- ความเร็ว `18.43 FPS`
-- สร้าง `20 IDs`
+- ความเร็ว `18.12 FPS`
+- สร้าง `20 raw IDs`
 
 เมื่อเทียบกับ Baseline:
 
 - จำนวน IDs ลดลง `50.0%`
-- FPS ลดลงประมาณ `23.5%`
+- FPS ลดลงประมาณ `13.5%`
 
 การตีความ:
 
@@ -590,18 +590,22 @@ Custom ReID จะพยายามย้าย stationary history จาก ID
 
 ผล:
 
-- ความเร็ว `11.20 FPS`
-- สร้าง `11 IDs`
+- ความเร็ว `8.45 FPS`
+- สร้าง `11 raw IDs`
+- เหลือ `10 logical IDs` หลัง Custom ReID recovery
+- เกิด `1 ReID merge`
 
 เมื่อเทียบกับ Baseline:
 
 - จำนวน IDs ลดลง `72.5%`
-- FPS ลดลงประมาณ `53.5%`
+- Logical IDs หลัง recovery ลดลง `75.0%`
+- FPS ลดลงประมาณ `59.7%`
 
 เมื่อเทียบกับ Intermediate:
 
 - จำนวน IDs ลดลง `45.0%`
-- FPS ลดลงประมาณ `39.2%`
+- Logical IDs หลัง recovery ลดลง `50.0%`
+- FPS ลดลงประมาณ `53.4%`
 
 การตีความ:
 
@@ -611,28 +615,34 @@ Custom ReID จะพยายามย้าย stationary history จาก ID
 - Custom ReID เพิ่มต้นทุน latency แต่ช่วยสืบทอด stationary history เมื่อ
   tracker ยังเกิด ID switch
 
-### 8.4 ข้อจำกัดของ Evaluation Metric ปัจจุบัน
+### 8.4 การแยก Raw Tracker IDs และ Logical IDs
 
-ค่า `Total Unique IDs` ใน `evaluate_metrics.py` เป็นจำนวน **raw Track IDs**
-ที่ tracker สร้างขึ้น:
+`evaluate_metrics.py` รายงาน metric สองระดับแยกกันแล้ว:
+
+- `Raw Tracker IDs` คือจำนวน Track ID ที่ detector/tracker สร้างขึ้น:
 
 ```python
 unique_track_ids.update(active_ids)
 ```
 
-ดังนั้น:
+- `Logical IDs After Recovery` คือจำนวน `TrackState` ที่เหลือหลัง Custom ReID
+  recovery รวม active, orphaned และ completed states:
 
-- ผล `11 IDs` ของ Config C แสดงประโยชน์ของ YOLOv8m-seg และ Custom BoT-SORT
-  ต่อ raw tracking fragmentation เป็นหลัก
-- Custom ReID ถูกนำไปรวมในเวลาประมวลผลของ Config C
-- Custom ReID ช่วยรักษา stationary history ภายใน `StationaryTracker`
-- แต่ CSV รุ่นนี้ยังไม่ได้รายงานจำนวน logical identities หลัง Custom ReID merge
+```python
+tracker_logic.get_total_logical_ids()
+```
 
-หากมีเวลาเพิ่ม ควรเพิ่ม metric:
+ดังนั้นผล Config C รอบล่าสุดแปลได้ว่า:
 
-- `Raw Tracker IDs`
-- `Recovered Logical IDs`
-- `Number of ReID Merges`
+- YOLOv8m-seg และ Custom BoT-SORT สร้าง `11 raw IDs`
+- Custom ReID merge raw fragment ได้ `1` ครั้ง
+- หลัง recovery เหลือ `10 logical IDs`
+- Config A และ Config B ไม่มี Custom ReID ค่า logical IDs จึงเท่ากับ raw IDs
+- ค่า FPS ของ Config C รวม Custom ReID overhead แล้ว
+
+metric ใหม่ช่วยแสดงผลของ recovery โดยตรงขึ้น แต่ยังเป็น proxy metric เพราะไม่มี
+Ground Truth ยืนยันว่า merge ถูกคนทุกครั้ง หากมีเวลาเพิ่ม ควรเพิ่ม metric:
+
 - `Rejected Teleport Matches`
 - `Longest Stay Error เทียบ Ground Truth`
 - `IDF1`, `HOTA` หรือ `MOTA` หากมี annotation
@@ -686,6 +696,7 @@ unique_track_ids.update(active_ids)
 ตอบคำถามเชิง ablation:
 
 - การเพิ่มความซับซ้อนแต่ละระดับช่วยลด raw Track IDs เท่าไร
+- Custom ReID ลดจำนวน logical identities ต่อจาก raw Track IDs ได้เท่าไร
 - Accuracy proxy แลกกับ FPS มากแค่ไหน
 - Pipeline ล่าสุดมี overhead มากน้อยเพียงใด
 
@@ -699,7 +710,7 @@ unique_track_ids.update(active_ids)
 
 - วัดเพียง 300 เฟรม
 - ยังไม่มี Ground Truth annotation
-- ยังไม่ได้แยก raw ID และ recovered logical ID ใน CSV
+- Logical IDs หลัง recovery ยังเป็น state-count proxy ไม่ใช่ Ground Truth ID accuracy
 - ค่า FPS ของ Config C รวม Custom ReID แต่ baseline ไม่มี overhead นี้
   ซึ่งเป็นการเปรียบเทียบ end-to-end ที่ตั้งใจไว้
 
@@ -814,7 +825,8 @@ central chest ROI เมื่อคนเอียงตัว จึงไม�
 
 ### 12.4 ควรทำ Ground Truth Annotation
 
-`Total Unique IDs` เป็น proxy metric เท่านั้น การประเมินที่น่าเชื่อถือขึ้นควร:
+`Raw Tracker IDs` และ `Logical IDs After Recovery` เป็น proxy metrics เท่านั้น
+การประเมินที่น่าเชื่อถือขึ้นควร:
 
 - annotate คนจริงในช่วงที่มี occlusion หนัก
 - จับเวลา stationary ด้วยสายตา
@@ -899,12 +911,12 @@ train โมเดล, ใช้ dataset หรือ implement orthogonal const
 11. เพิ่ม ROI Exclusion Zone เพื่อตัดพื้นที่ที่ไม่เกี่ยวข้อง
 12. เพิ่ม automated evaluation เพื่ออธิบาย trade-off ด้วยตัวเลข
 
-ผล evaluation 300 เฟรมแสดงว่า pipeline ล่าสุดลด raw Track IDs จาก `40` เหลือ
-`11` หรือลดลง `72.5%` เมื่อเทียบกับ baseline โดยแลกกับ FPS ที่ลดจาก `24.10`
-เหลือ `11.20` ระบบจึงเหมาะกับโจทย์ที่ให้ความสำคัญกับความต่อเนื่องของ identity
-และความถูกต้องของ Longest Stay มากกว่าความเร็วสูงสุดเพียงอย่างเดียว
+ผล evaluation 300 เฟรมรอบล่าสุดแสดงว่า pipeline ล่าสุดลด raw Track IDs จาก
+`40` เหลือ `11` หรือลดลง `72.5%` เมื่อเทียบกับ baseline และ Custom ReID merge
+ต่อจนเหลือ `10 logical IDs` โดยแลกกับ FPS ที่ลดจาก `20.95` เหลือ `8.45`
+ระบบจึงเหมาะกับโจทย์ที่ให้ความสำคัญกับความต่อเนื่องของ identity และความ
+ถูกต้องของ Longest Stay มากกว่าความเร็วสูงสุดเพียงอย่างเดียว
 
-> หมายเหตุ: ตัวเลข evaluation ข้างต้นวัดก่อนเพิ่ม Pants-First Multi-Region
-> ReID และ Shape-Aware Lanyard Extractor จึงยังใช้เป็นหลักฐานยืนยันผลของ
-> การเปลี่ยนแปลงล่าสุดไม่ได้ ต้องรัน
-> `python evaluate_metrics.py` ใหม่และตรวจ overlap scenes ด้วยสายตา
+> หมายเหตุ: ตัวเลข evaluation ข้างต้นวัดใหม่หลังเพิ่ม Pants-First Multi-Region
+> ReID และ Shape-Aware Lanyard Extractor แล้ว แต่ยังไม่ใช่ before/after ablation
+> ของสอง refinement นี้โดยตรง และยังต้องตรวจ overlap scenes ด้วยสายตา

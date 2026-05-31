@@ -345,3 +345,11 @@ class StationaryTracker:
 
         longest_state = max(all_states, key=lambda state: state.max_frames)
         return longest_state.track_id, longest_state.max_frames / self.fps
+
+    def get_total_logical_ids(self) -> int:
+        """Return the number of identities remaining after Re-ID recovery."""
+        return (
+            len(self.tracks)
+            + len(self.orphaned_tracks)
+            + len(self.completed_tracks)
+        )

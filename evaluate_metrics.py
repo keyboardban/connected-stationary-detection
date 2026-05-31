@@ -59,7 +59,9 @@ RESULT_COLUMNS = [
     "Detection Model",
     "Tracker",
     "ReID Enabled",
-    "Total Unique IDs",
+    "Raw Tracker IDs",
+    "Logical IDs After Recovery",
+    "ReID Merges",
     "Average FPS",
 ]
 
@@ -182,12 +184,20 @@ def run_evaluation(
     synchronize_mps()
     elapsed_seconds = time.perf_counter() - start_time
     average_fps = processed_frames / elapsed_seconds if elapsed_seconds else 0.0
+    raw_tracker_ids = len(unique_track_ids)
+    logical_ids = (
+        tracker_logic.get_total_logical_ids()
+        if tracker_logic is not None
+        else raw_tracker_ids
+    )
     return {
         "Experiment": config["experiment"],
         "Detection Model": config["detection_model"],
         "Tracker": config["tracker"],
         "ReID Enabled": config["reid_enabled"],
-        "Total Unique IDs": len(unique_track_ids),
+        "Raw Tracker IDs": raw_tracker_ids,
+        "Logical IDs After Recovery": logical_ids,
+        "ReID Merges": raw_tracker_ids - logical_ids,
         "Average FPS": round(average_fps, 2),
     }
 

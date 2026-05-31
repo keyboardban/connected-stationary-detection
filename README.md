@@ -55,6 +55,16 @@ python experiments.py
 
 Benchmark results are written to `outputs/experiments_result.csv`.
 
+To compare the baseline, intermediate, and full pipelines on the first 300 frames:
+
+```bash
+python evaluate_metrics.py
+```
+
+Evaluation results are written to `outputs/evaluation_metrics.csv`. The report
+separates raw tracker IDs from logical identities remaining after custom Re-ID
+recovery.
+
 For the full implementation history, architecture, output interpretation, and
 measured pipeline comparison, read the
 [detailed implementation report](docs/IMPLEMENTATION_REPORT.md).
