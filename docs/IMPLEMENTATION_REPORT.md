@@ -44,7 +44,7 @@ Track ID (`ID switching`) เสื้อยูนิฟอร์มที่ม
 
 | ไฟล์ | หน้าที่ |
 | --- | --- |
-| `outputs/result.mp4` | วิดีโอที่วาด Bounding Box, Track ID, สีเสื้อ, เวลานิ่งสูงสุด และ Exclusion Zone |
+| `outputs/result.mp4` | วิดีโอที่วาด Bounding Box, Track ID, สีสายคล้องคอ, เวลานิ่งสูงสุด และ Exclusion Zone |
 | `outputs/experiments_result.csv` | ผล Grid Search รุ่นแรก จำนวน 6 combinations บนช่วง 150 เฟรม |
 | `outputs/evaluation_metrics.csv` | ผลเปรียบเทียบ Baseline, Intermediate และ Ours บนช่วง 300 เฟรม |
 
@@ -476,15 +476,13 @@ cv2.pointPolygonTest(polygon, feet_point, False) > 0
 | Bounding Box สีเขียว | บุคคลกำลังเคลื่อนที่ หรือ history ยังไม่เต็ม window |
 | Bounding Box สีแดง | บุคคลอยู่ในสถานะ stationary |
 | `ID: ...` | Track ID ปัจจุบันจาก tracker |
-| `Pants: ...` | สีกางเกงเด่นที่สกัดจาก HSV |
 | `Lanyard: ...` | สีสายคล้องคอจาก thin-component detection และ temporal voting |
-| `Torso: ...` | สีเสื้อเด่นที่สกัดจาก HSV |
 | `Max Stay: ...s` | เวลานิ่งต่อเนื่องสูงสุดของ identity นั้น |
 
 ตัวอย่าง label:
 
 ```text
-ID: 12 | Pants: Purple | Lanyard: Red | Torso: Blue | Max Stay: 8.47s
+ID: 12 | Lanyard: Red | Max Stay: 8.47s
 ```
 
 ข้อสำคัญ: Track ID ที่แสดงบนวิดีโออาจเปลี่ยนหลัง tracker สร้าง ID ใหม่ แต่

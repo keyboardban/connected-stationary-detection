@@ -109,10 +109,8 @@ def main() -> None:
                         frame,
                         box,
                         track_id,
-                        torso_color,
                         max_duration,
                         is_stationary,
-                        pants_color=pants_color,
                         lanyard_color=lanyard_color,
                     )
             else:
