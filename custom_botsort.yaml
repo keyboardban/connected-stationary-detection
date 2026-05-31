@@ -6,9 +6,9 @@ new_track_thresh: 0.7
 track_buffer: 90
 match_thresh: 0.8
 fuse_score: true
-gmc_method: sparseOptFlow
+gmc_method: none
 
-# Appearance recovery is handled by src/reid.py so BoT-SORT stays lightweight.
+# Native BoT-SORT ReID was tested but did not improve this uniform-heavy scene.
 proximity_thresh: 0.5
 appearance_thresh: 0.8
 with_reid: false

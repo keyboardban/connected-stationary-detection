@@ -147,6 +147,11 @@ def run_evaluation(
             if boxes is not None and boxes.id is not None:
                 xyxy_boxes = boxes.xyxy.cpu().numpy()
                 track_ids = [int(track_id) for track_id in boxes.id.int().cpu().tolist()]
+                masks = (
+                    results[0].masks.data.cpu().numpy()
+                    if results[0].masks is not None
+                    else [None] * len(track_ids)
+                )
                 active_ids = set(track_ids)
                 unique_track_ids.update(active_ids)
 
@@ -158,14 +163,18 @@ def run_evaluation(
                         or lanyard_extractor is None
                     ):
                         raise RuntimeError("Custom ReID dependencies were not initialized.")
-                    for box, track_id in zip(xyxy_boxes, track_ids):
+                    for box, track_id, person_mask in zip(
+                        xyxy_boxes, track_ids, masks
+                    ):
                         centroid = calculate_centroid(box)
                         torso_color = appearance_extractor.get_color(frame, box)
                         pants_color = appearance_extractor.get_pants_color(frame, box)
                         lanyard_color = lanyard_extractor.get_color(
                             frame, box, track_id
                         )
-                        embeddings = reid_extractor.get_embedding(frame, box)
+                        embeddings = reid_extractor.get_embedding(
+                            frame, box, person_mask
+                        )
                         tracker_logic.update_track(
                             track_id,
                             centroid,

@@ -8,7 +8,8 @@ and runs Ultralytics inference with `device="mps"`.
 
 - YOLOv8 instance segmentation for overlapping people
 - Occlusion-tuned BoT-SORT tracking
-- Multi-region MobileNetV2 embeddings with pants-first ID recovery
+- Mask-aware, CLAHE-normalized MobileNetV2 embeddings with pants-first recovery
+- Stable logical IDs on the rendered overlay after successful recovery
 - Pants-color fallback matching with low-weight torso support
 - Shape-aware lanyard detection with temporal voting
 - Sliding-window stationary-duration analysis
@@ -45,6 +46,12 @@ The annotated result is written to:
 
 ```text
 outputs/result.mp4
+```
+
+Latest full render result:
+
+```text
+Longest stationary person: ID 33 with 41.09 seconds.
 ```
 
 ## Benchmark

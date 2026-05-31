@@ -76,6 +76,11 @@ def main() -> None:
             if boxes is not None and boxes.id is not None:
                 xyxy_boxes = boxes.xyxy.cpu().numpy()
                 track_ids = boxes.id.int().cpu().tolist()
+                masks = (
+                    results[0].masks.data.cpu().numpy()
+                    if results[0].masks is not None
+                    else [None] * len(track_ids)
+                )
                 active_ids = {
                     int(track_id)
                     for box, track_id in zip(xyxy_boxes, track_ids)
@@ -84,7 +89,7 @@ def main() -> None:
                     )
                 }
                 stationary_tracker.mark_lost_ids(active_ids)
-                for box, track_id in zip(xyxy_boxes, track_ids):
+                for box, track_id, person_mask in zip(xyxy_boxes, track_ids, masks):
                     track_id = int(track_id)
                     if is_in_exclusion_zone(
                         get_bottom_center(box), EXCLUSION_POLYGON
@@ -96,19 +101,23 @@ def main() -> None:
                     torso_color = appearance_extractor.get_color(frame, box)
                     pants_color = appearance_extractor.get_pants_color(frame, box)
                     lanyard_color = lanyard_extractor.get_color(frame, box, track_id)
-                    current_embeddings = reid_extractor.get_embedding(frame, box)
-                    is_stationary, max_duration = stationary_tracker.update_track(
-                        track_id,
-                        centroid,
-                        current_embeddings,
-                        torso_color,
-                        pants_color,
-                        lanyard_color,
+                    current_embeddings = reid_extractor.get_embedding(
+                        frame, box, person_mask
+                    )
+                    is_stationary, max_duration, logical_id = (
+                        stationary_tracker.update_track(
+                            track_id,
+                            centroid,
+                            current_embeddings,
+                            torso_color,
+                            pants_color,
+                            lanyard_color,
+                        )
                     )
                     draw_info(
                         frame,
                         box,
-                        track_id,
+                        logical_id,
                         max_duration,
                         is_stationary,
                         lanyard_color=lanyard_color,

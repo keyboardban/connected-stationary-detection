@@ -18,6 +18,7 @@ class TrackState:
     """Mutable stationary-analysis state associated with one visible track."""
 
     track_id: int
+    logical_id: int
     history: deque[np.ndarray]
     embeddings: RegionEmbeddings = field(default_factory=RegionEmbeddings)
     torso_color: str = "Unknown"
@@ -70,7 +71,11 @@ class StationaryTracker:
         self.completed_tracks: list[TrackState] = []
 
     def _new_state(self, track_id: int) -> TrackState:
-        return TrackState(track_id=track_id, history=deque(maxlen=self.history_size))
+        return TrackState(
+            track_id=track_id,
+            logical_id=track_id,
+            history=deque(maxlen=self.history_size),
+        )
 
     def _recover_or_create(
         self,
@@ -273,8 +278,8 @@ class StationaryTracker:
         torso_color: str,
         pants_color: str,
         lanyard_color: str,
-    ) -> tuple[bool, float]:
-        """Update one track and return stationary status and maximum seconds."""
+    ) -> tuple[bool, float, int]:
+        """Update one track and return status, maximum seconds, and logical ID."""
         centroid_array = np.asarray(centroid, dtype=np.float64)
         if centroid_array.shape != (2,):
             raise ValueError("centroid must contain exactly two coordinates.")
@@ -315,7 +320,7 @@ class StationaryTracker:
         else:
             state.is_stationary = False
 
-        return state.is_stationary, state.max_frames / self.fps
+        return state.is_stationary, state.max_frames / self.fps, state.logical_id
 
     def mark_lost_ids(self, active_ids: set[int]) -> None:
         """Move tracks missing from the analyzed area into the recovery pool."""
@@ -344,7 +349,7 @@ class StationaryTracker:
             return None, 0.0
 
         longest_state = max(all_states, key=lambda state: state.max_frames)
-        return longest_state.track_id, longest_state.max_frames / self.fps
+        return longest_state.logical_id, longest_state.max_frames / self.fps
 
     def get_total_logical_ids(self) -> int:
         """Return the number of identities remaining after Re-ID recovery."""

@@ -36,15 +36,16 @@ Track ID (`ID switching`) เสื้อยูนิฟอร์มที่ม
 | Input | `data/entrance.mov` |
 | Resolution | `1920 x 1080` |
 | FPS จาก metadata | `29.8825` |
-| จำนวนเฟรม | `2556` |
-| ความยาววิดีโอ | `85.53 วินาที` |
+| จำนวนเฟรมจาก metadata | `2556` |
+| จำนวนเฟรมที่ OpenCV decode ได้จริง | `2548` |
+| ความยาววิดีโอจาก metadata | `85.53 วินาที` |
 | ขนาดไฟล์ | ประมาณ `90 MB` |
 
 ไฟล์ Output ที่ระบบสร้าง:
 
 | ไฟล์ | หน้าที่ |
 | --- | --- |
-| `outputs/result.mp4` | วิดีโอที่วาด Bounding Box, Track ID, สีสายคล้องคอ, เวลานิ่งสูงสุด และ Exclusion Zone |
+| `outputs/result.mp4` | วิดีโอที่วาด Bounding Box, Logical ID, สีสายคล้องคอ, เวลานิ่งสูงสุด และ Exclusion Zone |
 | `outputs/experiments_result.csv` | ผล Grid Search รุ่นแรก จำนวน 6 combinations บนช่วง 150 เฟรม |
 | `outputs/evaluation_metrics.csv` | ผลเปรียบเทียบ Baseline, Intermediate และ Ours บนช่วง 300 เฟรม |
 
@@ -66,7 +67,9 @@ flowchart TD
     C --> D{"Feet point อยู่ใน<br/>Exclusion Polygon?"}
     D -- "Yes" --> E["วาดกล่องสีเทา<br/>ไม่นับเวลา"]
     D -- "No" --> F["Head 0%-25%<br/>Pants 55%-95%<br/>Torso 25%-55%"]
-    F --> G["Batched MobileNetV2<br/>Multi-Region Embeddings<br/>device=mps"]
+    F --> Q["Segmentation Mask<br/>ตัด Background และคนซ้อน"]
+    Q --> R["LAB CLAHE<br/>Normalize แสงเงา"]
+    R --> G["Batched MobileNetV2<br/>Multi-Region Embeddings<br/>device=mps"]
     D -- "No" --> H["HSV Regional Colors"]
     H --> I["Pants Color<br/>Torso Color"]
     D -- "No" --> O["Central Chest ROI"]
@@ -86,7 +89,7 @@ flowchart TD
 | --- | --- |
 | `src/detector.py` | โหลด YOLO และรัน tracking เฉพาะ class `person` |
 | `custom_botsort.yaml` | ปรับ BoT-SORT สำหรับ occlusion |
-| `src/reid.py` | สกัด normalized Head, Pants และ Torso Embeddings ด้วย MobileNetV2 แบบ batched |
+| `src/reid.py` | สกัด mask-aware, illumination-normalized Head, Pants และ Torso Embeddings ด้วย MobileNetV2 แบบ batched |
 | `src/features.py` | สกัด Pants/Torso Color และ Shape-Aware Lanyard Color |
 | `src/logic.py` | จัดการ Stationary State, orphan tracks, Custom ReID และ fallback matching |
 | `src/utils.py` | คำนวณ centroid, feet point, polygon test และวาดข้อมูลลงเฟรม |
@@ -200,9 +203,9 @@ Detector หลักถูกเปลี่ยนจาก `yolov8m.pt` เป
 - เมื่อคนซ้อนกัน ขอบเขต object มีโอกาสเสถียรกว่า
 - Tracker มีข้อมูล Detection ที่เหมาะกับฉาก occlusion มากขึ้น
 
-แม้ pipeline ปัจจุบันยังใช้ Bounding Box จากผล segmentation ในการคำนวณ
-centroid และ crop ROI แต่ detector รุ่น segmentation ช่วยปรับคุณภาพของ
-การแยก instance ตั้งแต่ต้นทาง
+pipeline ยังคงใช้ Bounding Box จากผล segmentation ในการคำนวณ centroid แต่ใช้
+instance mask ของแต่ละคนตัด background และคนที่ซ้อนกันออกจาก ReID crop โดยตรง
+ก่อนสร้าง embedding
 
 ### 4.6 ปรับ BoT-SORT สำหรับ Occlusion
 
@@ -216,12 +219,18 @@ centroid และ crop ROI แต่ detector รุ่น segmentation ช่�
 | `new_track_thresh` | `0.7` | ลดการสร้าง ID ใหม่จาก detection ที่ยังไม่มั่นใจ |
 | `track_buffer` | `90` | จำ lost track ได้นานประมาณ 3 วินาทีที่ 30 FPS |
 | `match_thresh` | `0.8` | ปรับ threshold สำหรับ matching |
-| `gmc_method` | `sparseOptFlow` | ใช้ optical flow ช่วยชดเชยการเคลื่อนที่ของภาพ |
-| `with_reid` | `false` | ปิด internal ReID เพราะใช้โมดูล Custom ReID แยกต่างหาก |
+| `gmc_method` | `none` | กล้องตั้งอยู่กับที่ จึงไม่ใช้ optical-flow camera-motion compensation |
+| `with_reid` | `false` | Native detector-feature ReID ถูกทดลองแล้วแต่ไม่ลด raw IDs ในฉากยูนิฟอร์มนี้ |
 
 `track_buffer: 90` เป็นค่าที่สำคัญมากสำหรับทางเข้าอาคาร เพราะการเดินสวนหรือ
 บังกันมักกินเวลาหลายสิบเฟรม หาก buffer สั้นเกินไป Tracker จะทิ้ง ID เดิมเร็ว
 และสร้าง ID ใหม่
+
+Ultralytics `8.4.57` รองรับ BoT-SORT internal ReID ด้วย native detector
+features ผ่าน `with_reid: true` และ `model: auto` แต่ ablation บน 300 เฟรมแรก
+ของวิดีโอนี้สร้าง `12 raw / 11 logical IDs` แย่กว่า config ที่เลือกซึ่งสร้าง
+`11 raw / 10 logical IDs` จึงปิดไว้ ฉากนี้เป็นกล้อง fixed camera และคนจำนวนมาก
+ใส่เสื้อคล้ายกัน จึงเลือกใช้ Custom ReID ที่ควบคุม ROI และ mask ได้ละเอียดกว่า
 
 ### 4.7 เพิ่ม Custom ReID ด้วย MobileNetV2
 
@@ -232,13 +241,16 @@ centroid และ crop ROI แต่ detector รุ่น segmentation ช่�
 3. ย้ายโมเดลไป `device="mps"`
 4. ตั้ง `eval()`
 5. Crop หลาย ROI ได้แก่ Head, Pants และ Torso
-6. Resize แต่ละ crop เป็น `256 x 128`
-7. แปลง BGR เป็น RGB
-8. Normalize ด้วย ImageNet mean และ standard deviation
-9. รวม ROI ที่ valid เป็น batch เดียว
-10. Forward pass บน MPS ด้วย `torch.inference_mode()`
-11. Normalize embedding แต่ละ region ด้วย L2 norm
-12. Detach embeddings กลับมาไว้บน CPU
+6. ใช้ instance segmentation mask ของคนแต่ละคนตัด background และ overlap contamination
+7. เติมพื้นที่นอก mask ด้วย neutral gray เพื่อลดอิทธิพลของฉากหลัง
+8. แปลง crop เป็น LAB และใช้ CLAHE กับ luminance channel เพื่อลดผลจากแสงเงา
+9. Resize แต่ละ crop เป็น `256 x 128`
+10. แปลง BGR เป็น RGB
+11. Normalize ด้วย ImageNet mean และ standard deviation
+12. รวม ROI ที่ valid เป็น batch เดียว
+13. Forward pass บน MPS ด้วย `torch.inference_mode()`
+14. Normalize embedding แต่ละ region ด้วย L2 norm
+15. Detach embeddings กลับมาไว้บน CPU
 
 การแยกโมดูล Custom ReID ทำให้ควบคุมกติกาการ merge ID ได้ละเอียดกว่าเปิด ReID
 ภายใน tracker อย่างเดียว
@@ -287,6 +299,8 @@ multi_region_similarity =
 - Torso Embedding ยังมีไว้เป็น fallback แต่ให้น้ำหนักต่ำ เพราะเสื้อเหมือนกัน
 - ส่งทั้งสาม crop เข้า MobileNetV2 เป็น batch เดียว ลด overhead ของ model launch
 - Pants HSV Color ช่วยลงโทษ match ที่กางเกงคนละสี และใช้เป็น fallback ได้
+- Segmentation mask ลด background และ pixel ของคนอื่นเมื่อ Bounding Box ซ้อนกัน
+- LAB CLAHE ลดความไวต่อแสงเงาโดยยังเก็บ chroma สำหรับแยกสีเสื้อผ้า
 
 ข้อควรระวัง:
 
@@ -456,6 +470,8 @@ cv2.pointPolygonTest(polygon, feet_point, False) > 0
 8. หากอยู่นอก polygon:
    - คำนวณ centroid
    - สกัด Torso Color, Pants Color และ Shape-Aware Lanyard Color
+   - ใช้ segmentation mask ตัด background และคนซ้อนออกจาก ReID crop
+   - Normalize luminance ด้วย LAB CLAHE
    - สกัด Head, Pants และ Torso Embeddings ด้วย batched MPS inference
    - พยายาม recover ID ด้วย distance-penalized cosine similarity
    - fallback ตามลำดับ Pants Color, Lanyard Color และ Torso Color
@@ -475,7 +491,7 @@ cv2.pointPolygonTest(polygon, feet_point, False) > 0
 | Bounding Box สีเทา + `EXCLUDED` | บุคคลอยู่ใน Exclusion Zone จึงไม่นับเวลา |
 | Bounding Box สีเขียว | บุคคลกำลังเคลื่อนที่ หรือ history ยังไม่เต็ม window |
 | Bounding Box สีแดง | บุคคลอยู่ในสถานะ stationary |
-| `ID: ...` | Track ID ปัจจุบันจาก tracker |
+| `ID: ...` | Logical ID ที่คงเดิมหลัง Custom ReID recovery สำเร็จ |
 | `Lanyard: ...` | สีสายคล้องคอจาก thin-component detection และ temporal voting |
 | `Max Stay: ...s` | เวลานิ่งต่อเนื่องสูงสุดของ identity นั้น |
 
@@ -485,9 +501,9 @@ cv2.pointPolygonTest(polygon, feet_point, False) > 0
 ID: 12 | Lanyard: Red | Max Stay: 8.47s
 ```
 
-ข้อสำคัญ: Track ID ที่แสดงบนวิดีโออาจเปลี่ยนหลัง tracker สร้าง ID ใหม่ แต่
-Custom ReID จะพยายามย้าย stationary history จาก ID เดิมไปยัง ID ใหม่ เพื่อให้
-เวลา longest stay ไม่เริ่มนับใหม่โดยไม่จำเป็น
+ข้อสำคัญ: tracker ภายในยังสามารถสร้าง raw Track ID ใหม่หลัง occlusion ได้ แต่
+Custom ReID จะพยายามย้าย stationary history และ logical ID เดิมไปยัง TrackState
+ใหม่ หาก recovery สำเร็จ เลข `ID` ที่แสดงบนวิดีโอจึงไม่เปลี่ยนตาม raw ID
 
 ---
 
@@ -531,9 +547,9 @@ Custom ReID จะพยายามย้าย stationary history จาก ID
 
 | Experiment | Detection Model | Tracker | Custom ReID | Raw Tracker IDs | Logical IDs After Recovery | ReID Merges | Average FPS |
 | --- | --- | --- | --- | ---: | ---: | ---: | ---: |
-| Config A (Baseline) | `yolov8m.pt` | `bytetrack.yaml` | ปิด | 40 | 40 | 0 | 20.95 |
-| Config B (Intermediate) | `yolov8m-pose.pt` | `botsort.yaml` | ปิด | 20 | 20 | 0 | 18.12 |
-| Config C (Ours) | `yolov8m-seg.pt` | `custom_botsort.yaml` | เปิด | 11 | 10 | 1 | 8.45 |
+| Config A (Baseline) | `yolov8m.pt` | `bytetrack.yaml` | ปิด | 40 | 40 | 0 | 19.97 |
+| Config B (Intermediate) | `yolov8m-pose.pt` | `botsort.yaml` | ปิด | 20 | 20 | 0 | 19.04 |
+| Config C (Ours) | `yolov8m-seg.pt` | `custom_botsort.yaml` | เปิด | 11 | 10 | 1 | 8.62 |
 
 ### 8.1 Config A: Baseline
 
@@ -545,7 +561,7 @@ Custom ReID จะพยายามย้าย stationary history จาก ID
 
 ผล:
 
-- เร็วที่สุดในชุด evaluation ที่ `20.95 FPS`
+- เร็วที่สุดในชุด evaluation ที่ `19.97 FPS`
 - สร้าง `40 raw IDs`
 
 การตีความ:
@@ -564,13 +580,13 @@ Custom ReID จะพยายามย้าย stationary history จาก ID
 
 ผล:
 
-- ความเร็ว `18.12 FPS`
+- ความเร็ว `19.04 FPS`
 - สร้าง `20 raw IDs`
 
 เมื่อเทียบกับ Baseline:
 
 - จำนวน IDs ลดลง `50.0%`
-- FPS ลดลงประมาณ `13.5%`
+- FPS ลดลงประมาณ `4.7%`
 
 การตีความ:
 
@@ -585,12 +601,13 @@ Custom ReID จะพยายามย้าย stationary history จาก ID
 - Custom BoT-SORT
 - Lost-track buffer `90` เฟรม
 - Custom MobileNetV2 Pants-First Multi-Region ReID
+- Segmentation-mask crop และ LAB CLAHE illumination normalization
 - Spatial constraint และ distance penalty
 - Pants Color fallback, Shape-Aware Lanyard tie-breaker และ Torso Color fallback
 
 ผล:
 
-- ความเร็ว `8.45 FPS`
+- ความเร็ว `8.62 FPS`
 - สร้าง `11 raw IDs`
 - เหลือ `10 logical IDs` หลัง Custom ReID recovery
 - เกิด `1 ReID merge`
@@ -599,13 +616,13 @@ Custom ReID จะพยายามย้าย stationary history จาก ID
 
 - จำนวน IDs ลดลง `72.5%`
 - Logical IDs หลัง recovery ลดลง `75.0%`
-- FPS ลดลงประมาณ `59.7%`
+- FPS ลดลงประมาณ `56.8%`
 
 เมื่อเทียบกับ Intermediate:
 
 - จำนวน IDs ลดลง `45.0%`
 - Logical IDs หลัง recovery ลดลง `50.0%`
-- FPS ลดลงประมาณ `53.4%`
+- FPS ลดลงประมาณ `54.7%`
 
 การตีความ:
 
@@ -614,6 +631,7 @@ Custom ReID จะพยายามย้าย stationary history จาก ID
   ช่วยลด fragmentation ได้ดีในช่วงทดสอบ
 - Custom ReID เพิ่มต้นทุน latency แต่ช่วยสืบทอด stationary history เมื่อ
   tracker ยังเกิด ID switch
+- Overlay ใช้ logical ID เดิมต่อหลัง recovery สำเร็จ เพื่อลดเลข ID กระโดดในวิดีโอ
 
 ### 8.4 การแยก Raw Tracker IDs และ Logical IDs
 
@@ -672,6 +690,13 @@ Ground Truth ยืนยันว่า merge ถูกคนทุกครั
 - ต้องใช้คนดูวิดีโอ
 - ไม่ใช่ metric เชิงตัวเลข
 - ต้อง render ใหม่หลังแก้ pipeline
+
+ผล full render ล่าสุดหลังเพิ่ม mask-aware CLAHE preprocessing และ stable logical
+ID overlay:
+
+```text
+Longest stationary person: ID 33 with 41.09 seconds.
+```
 
 ### 9.2 `outputs/experiments_result.csv`
 
@@ -860,6 +885,7 @@ coordinate ก่อนวัดระยะ
 | Head embedding weight | `0.25` |
 | Torso embedding weight | `0.15` |
 | Orphan lifetime | `3 วินาที` |
+| BoT-SORT GMC method | `none` สำหรับกล้อง fixed camera |
 
 เมื่อเปลี่ยนมุมกล้อง, resolution หรือ FPS ควร calibrate ค่าเหล่านี้ใหม่
 
@@ -910,10 +936,12 @@ train โมเดล, ใช้ dataset หรือ implement orthogonal const
 10. เพิ่ม EMA ให้ embedding เสถียรขึ้น
 11. เพิ่ม ROI Exclusion Zone เพื่อตัดพื้นที่ที่ไม่เกี่ยวข้อง
 12. เพิ่ม automated evaluation เพื่ออธิบาย trade-off ด้วยตัวเลข
+13. ใช้ segmentation mask และ LAB CLAHE กับ Custom ReID crops
+14. แสดง logical ID เดิมต่อหลัง Custom ReID recovery สำเร็จ
 
 ผล evaluation 300 เฟรมรอบล่าสุดแสดงว่า pipeline ล่าสุดลด raw Track IDs จาก
 `40` เหลือ `11` หรือลดลง `72.5%` เมื่อเทียบกับ baseline และ Custom ReID merge
-ต่อจนเหลือ `10 logical IDs` โดยแลกกับ FPS ที่ลดจาก `20.95` เหลือ `8.45`
+ต่อจนเหลือ `10 logical IDs` โดยแลกกับ FPS ที่ลดจาก `19.97` เหลือ `8.62`
 ระบบจึงเหมาะกับโจทย์ที่ให้ความสำคัญกับความต่อเนื่องของ identity และความ
 ถูกต้องของ Longest Stay มากกว่าความเร็วสูงสุดเพียงอย่างเดียว
 
