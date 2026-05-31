@@ -25,7 +25,7 @@ TRACKER_TYPE = "custom_botsort.yaml"
 HISTORY_SECONDS = 1.0
 PIXEL_THRESHOLD = 25.0
 EXCLUSION_POLYGON = np.array(
-    [[280, 150], [430, 150], [430, 520], [280, 520]], dtype=np.int32
+    [[280, 150], [430, 150], [720, 1040], [450, 1040]], dtype=np.int32
 )
 
 
